@@ -49,9 +49,9 @@ class TrainingRobotController:
         
         # create ethernet socket
         print("Creating ethernet socket for sensor sampling.")
-        # self.sock = socket.socket(socket.AF_INET, # Internet
-        #              socket.SOCK_DGRAM) # UDP
-        # self.sock.bind((UDP_IP, UDP_PORT))
+        self.sock = socket.socket(socket.AF_INET, # Internet
+                     socket.SOCK_DGRAM) # UDP
+        self.sock.bind((UDP_IP, UDP_PORT))
         
         # create comms for dynamixels
         self.portHandler, self.packetHandler, self.groupSyncWrite, self.groupSyncRead, self.groupSyncWrite_PROF_VEL = initComms()
@@ -342,66 +342,30 @@ class TrainingRobotController:
                             
                         # print('present pos: ', self.present_pos)
 
-                        #  # Clear syncwrite parameter storage
-                        # self.groupSyncRead.clearParam()
-
-
-
+                        # read ati 
                         # request data
-                        # tosend = "request"
-                        # self.sock.sendto(tosend.encode(), (UDP_DEST, UDP_PORT))
-                        
-                        # # recieve data from the system
-                        # data, addr = self.sock.recvfrom(1024) # buffer size is 1024 bytes
-                        # # print(i)
-                        # # decode data
-                        # data = str(data.decode())
-                        # # first, split data at '\n' char
-                        # data = data.split("\n")
-                        # # then, split data at commas
-                        # str_data = data[0]
-                        # flt_data = str_data.split(",")
-                        # # print(str_data)
-                        # # print([flt_data[0:12]])
-                        # # convert data to floats
-                        # for i in range(len(flt_data)):
-                        #     flt_data[i] = float(flt_data[i])
-                        # # append other data we want to save
-                        # flt_data.append(float(self.traj[j][0])) # desired x (mm)
-                        # flt_data.append(float(self.traj[j][1])) # desired y (mm)
-                        # flt_data.append(float(self.traj[j][2])) # desired z (mm)
-                        # flt_data.append(float(self.save_data[j][0])) # contact flag
-                        # # TODO: check all of this!
-                        # flt_data.append(float(self.traj[j][3])) # desired ATI pitch (rads)
-                        # flt_data.append(float(self.traj[j][4])) # desired ATI roll (rads)
-                        # flt_data.append(self.present_pos[0]) # actual x (counts)
-                        # flt_data.append(self.present_pos[1]) # actual y1 (counts)   might only need to send one of the y values - they should be the same.
-                        # flt_data.append(self.present_pos[2]) # actual y2 (counts)
-                        # flt_data.append(self.present_pos[3]) # actual z (counts)
-                        # flt_data.append(self.present_pos[4]) # actual ATI pitch (counts)
-                        # flt_data.append(self.present_pos[5]) # actual ATI roll (counts)
-                        # flt_data.append(self.pulses_to_position_x(self.present_pos[0])) # actual x (mm)
-                        # flt_data.append(self.pulses_to_position_y1(self.present_pos[1])) # actual y1 (mm)   might only need to send one of the y values - they should be the same.
-                        # flt_data.append(self.pulses_to_position_y2(self.present_pos[2])) # actual y2 (mm)
-                        # flt_data.append(self.pulses_to_position_z(self.present_pos[3])) # actual z (mm)
-                        # flt_data.append(p2r(self.present_pos[4])) # actual ATI pitch (rads)
-                        # flt_data.append(p2r(self.present_pos[5])) # actual ATI roll (rads)
-                        # flt_data.append(dxlx_des) #desired x (counts)
-                        # flt_data.append(dxly1_des) #desired y1 (counts)
-                        # flt_data.append(dxly2_des) #desired y2 (counts)
-                        # flt_data.append(dxlz_des) #desired z (counts)
-                        # flt_data.append(dxlt_des) #desired theta (counts)
-                        # flt_data.append(dxlp_des) #desired phi (counts)
-                        # print(flt_data)
-                        # #TODO: add current dxl positions
-                        # # convert data for logging
-                        # logline = str(flt_data[0])
-                        # for i in range(1, len(flt_data)):
-                        #     logline = logline + ", " + str(flt_data[i])
-                        # # print(logline)
-                        # self.log_file.write(logline)
-                        # self.log_file.write('\n')
-                    # break the loop
+                        tosend = "request"
+                        self.sock.sendto(tosend.encode(), (UDP_DEST, UDP_PORT))
+
+                        # recieve data from the system
+                        data, addr = self.sock.recvfrom(1024) # buffer size is 1024 bytes
+                        # decode data
+                        data = str(data.decode())
+                        # first, split data at '\n' char
+                        data = data.split("\n")
+                        # then, split data at commas
+                        str_data = data[0]
+                        flt_data = str_data.split(",")
+                        # convert data to floats
+                        for i in range(len(flt_data)):
+                            flt_data[i] = float(flt_data[i])
+                        # print it out
+                        print("\033c", end="")
+                        print("%5.2f, % 3.2f, % 3.2f, % 3.2f" % (flt_data[0], flt_data[1], flt_data[2], flt_data[3]))
+                        print(self.present_pos)
+                        # print(flt_data[0:4])
+
+
                 break
             # Clear syncwrite parameter storage
             self.groupSyncRead.clearParam()
@@ -438,7 +402,8 @@ if __name__ == "__main__":
     # # testing single point
     traj_data = [0, 0, 2, 0, 0] # sensor height is -114mm
     save_data = [0, 0, 0]
-    robot.add_point(traj_data, save_data)
+    for _ in range(1000):
+        robot.add_point(traj_data, save_data)
 
     #check points
     if robot.check_traj():
