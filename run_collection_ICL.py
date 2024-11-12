@@ -21,8 +21,9 @@ class Config:
     UDP_DEST: str  # IP of Nucleo Board
     UDP_PORT: int 
     baud_rate: str
-    sensor_frequency: int
-    dxl_frequency: int
+    verbose_aggregator: bool
+    sensor_sample_freq: int
+    dxl_sample_freq: int
 
 # Robot class
 class TrainingRobot:
@@ -39,7 +40,7 @@ class TrainingRobot:
         self.setup_dxl()
 
     def setup_ethernet(self):
-        print("Creating ethernet socket for sensor sampling.")
+        print("Creating ethernet socket for ati sampling.")
         self.sock = socket.socket(
             socket.AF_INET,  # Internet
             socket.SOCK_DGRAM,
@@ -78,21 +79,21 @@ class TrainingRobot:
         self.groupSyncWrite.clearParam()
         time.sleep(1)  # wait for dxl to get to their positions
 
-    def get_sensor_data(self):
+    def get_ati_data(self):
         tosend = "request"
         self.sock.sendto(tosend.encode(), (self.config.UDP_DEST, self.config.UDP_PORT))
-
         # receive data from system
         data, addr = self.sock.recvfrom(1024) # buffer size is 1024 bytes
         # decode data
-        data = str(data.decode()).split('\n')[0]  # Recover first part of buffer
-
-        str_data = data
-        # if i ==0:
-        # if (str_data.strip()):
+        str_data = str(data.decode()).split('\n')[0]  # Recover first part of buffer
         float_data = [float(d) for d in str_data.split(",")]
-        return float_data
+        # only return time, fx, fy, fz
+        return float_data[0:4]
     
+    def get_icl_data(self):
+        """Pull data from icl sensor over serial"""
+        return [0]*36
+
     def get_dxl_data(self):
         """Write dxl data to present_position"""
         #read dynamixel values: x, y, z, theta, phi
@@ -117,9 +118,6 @@ class TrainingRobot:
         self.present_pos[4] = p2r(new_pos[4])
         self.present_pos[5] = p2r(new_pos[5])
         return self.present_pos
-    
-    def get_icl_data(self):
-        """Pull data from icl sensor over serial"""
 
     '''shutdown robot'''
     def shutdown(self):
@@ -143,12 +141,12 @@ def sensor_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
             if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
                 raise ValueError("Overran too much")
         # Sample data
-        sample = robot.get_sensor_data()
-        # sample = [time.perf_counter()]
+        ati_sample = robot.get_ati_data()
+        icl_sample = robot.get_icl_data()
+        sample = ati_sample + icl_sample # ati data is 4 values, icl data is 36 values
         data_queue.put(sample)
-        # all_data.append(sample)
         i += 1
-    print(overrun_count)
+    print("Sensor sample loop overruns: ", overrun_count)
 
 def dxl_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
     overrun_count = 0
@@ -165,22 +163,21 @@ def dxl_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
                 raise ValueError("Overran too much")
         # Sample data
         sample = robot.get_dxl_data()
-        # sample = [time.perf_counter()]
         data_queue.put(sample)
-        # all_data.append(sample)
         i += 1
-    print(overrun_count)
+    print("DXL sample loop overruns: ", overrun_count)
 
 # aggregation
-def aggregator_worker(data_dir_name, sensor_queue, dxl_queue, sensor_frequency, dxl_frequency, done_flag, tare_flag, data_valid_flag):
+def aggregator_worker(data_dir_name, sensor_queue, dxl_queue, sensor_sample_freq, dxl_sample_freq, done_flag, tare_flag, data_valid_flag, verbose_flag):
 
-    dxl_period = int(sensor_frequency / dxl_frequency)
+    dxl_period = int(sensor_sample_freq / dxl_sample_freq)
     sensor_data = None
     dxl_data = None
 
     all_data = []
     data_valid = 0 
     i = 0
+    j = 0
     while (done_flag.value == 0):
         try:
             sensor_data = sensor_queue.get(block=True, timeout=10)
@@ -197,26 +194,26 @@ def aggregator_worker(data_dir_name, sensor_queue, dxl_queue, sensor_frequency, 
         
         combo_data = sensor_data + dxl_data + [data_valid] # dxl data is just the most recent one
 
-        # print(sensor_data[4:12])
-        for j in range(1, 12):
-            print(f"{sensor_data[j]:+.4f}", end = " ")
-        print(len(all_data))
+        # sensor data is now 4 ati values plus 36 icl values
+        if verbose_flag:
+            for j in range(1, 40): # essentially don't print time
+                print(f"{sensor_data[j]:+.4f}", end = " ")
+            print(len(all_data))
         #         tare_flag.value = 0
         #         all_data.append([-1 for _ in range(len(combo_data))])
         all_data.append(combo_data)
 
         if (len(all_data) % 1000 == 0):
-            data_filename = os.path.join(data_dir_name, f"segment_{i}.npy")
-            print(data_filename)
+            data_filename = os.path.join(data_dir_name, f"segment_{j}.npy")
+            print("Saving: ", data_filename)
             np.save(data_filename, all_data)
             all_data = []
-            # np.save(self.data_filename, all_data)
-            # np.save(self.key_filename, self.data_key)
-            print("Saved")
+            j += 1
         i += 1
     
 
-    data_filename = os.path.join(data_dir_name, f"segment_{i}.npy")
+    data_filename = os.path.join(data_dir_name, f"segment_{j}.npy")
+    print("Saving: ", data_filename)
     np.save(data_filename, all_data)
 
     if done_flag.value == 0:
@@ -270,7 +267,7 @@ def dxl_control_worker(robot, commands, done_flag, tare_flag, data_valid_flag):
 
         # Clear syncwrite parameter storage
         robot.groupSyncWrite.clearParam()
-        time.sleep(t_dwell) #wait for dxl to get to their positions
+        time.sleep(t_dwell) # wait for dxl to get to their positions
     
     done_flag.value = 1
 
@@ -282,9 +279,11 @@ class TrainingRobotController:
     """
 
     data_key = {"time": 0, "Fx": 1, "Fy": 2, "Fz": 3,
-            "s1": 4, "s2": 5, "s3": 6, "s4": 7, "s5": 8, "s6": 9, "s7": 10, "s8": 11, "tof1": 12, "tof2": 13, "tof3": 14, "tof4": 15, 
-            "x_act": 16, "y1_act": 17, "y2_act": 18, "z_act": 19, "theta_act": 20, "phi_act": 21, 
-            "data_valid": 22}
+            "s1_1": 4,  "s1_2": 5,  "s1_3": 6,  "s1_4": 7,  "s1_5": 8,  "s1_6": 9,  "s1_7": 10, "s1_8": 11, "s1_9": 12, "s1_10": 13, "s1_11": 14, "s1_12": 15,
+            "s2_1": 16, "s2_2": 17, "s2_3": 18, "s2_4": 19, "s2_5": 20, "s2_6": 21, "s2_7": 22, "s2_8": 23, "s2_9": 24, "s2_10": 25, "s2_11": 26, "s2_12": 27,
+            "s3_1": 28, "s3_2": 29, "s3_3": 30, "s3_4": 31, "s3_5": 32, "s3_6": 33, "s3_7": 34, "s3_8": 35, "s3_9": 36, "s3_10": 37, "s3_11": 38, "s3_12": 39,
+            "x_act": 40, "y1_act": 41, "y2_act": 42, "z_act": 43, "theta_act": 44, "phi_act": 45, 
+            "data_valid": 46}
 
     config = None
 
@@ -357,12 +356,12 @@ class TrainingRobotController:
     def check_traj(self):
         """check for good trajectory"""
         if len(self.err_pts) == 0:
-            print("NO BAD POINTS")
-            return 1
+            print("No bad points, can proceed with trajectory.")
+            return True
         else:
-            print("BAD POINTS")
+            print("Bad points found in trajectory, stopping.")
             print(self.err_pts)
-            return 0
+            return False
     
     def run_trajectory_parallel(self):
         """
@@ -375,8 +374,8 @@ class TrainingRobotController:
         sensor data.
         """
 
-        sensor_loop_time = 1 / self.config.sensor_frequency
-        dxl_loop_time = 1 / self.config.dxl_frequency
+        sensor_loop_time = 1 / self.config.sensor_sample_freq
+        dxl_loop_time = 1 / self.config.dxl_sample_freq
         
         start_time = time.perf_counter() + 1.0
 
@@ -392,7 +391,8 @@ class TrainingRobotController:
         sensor_process = multiprocess.Process(target=sensor_sample_worker, 
                 args=(self.robot, start_time, sensor_loop_time, sensor_queue, done_flag))
         aggregator_process = multiprocess.Process(target=aggregator_worker,
-                args=(self.data_dir_name, sensor_queue, dxl_queue, self.config.sensor_frequency, self.config.dxl_frequency, done_flag, tare_flag, data_valid_flag))
+                args=(self.data_dir_name, sensor_queue, dxl_queue, self.config.sensor_sample_freq, self.config.dxl_sample_freq,
+                        done_flag, tare_flag, data_valid_flag, self.config.verbose_aggregator))
         dxl_control_process = multiprocess.Process(target=dxl_control_worker,
                                                       args=(self.robot, self.commands, done_flag, tare_flag, data_valid_flag))
         # -- Start data collection -- #
@@ -407,11 +407,11 @@ class TrainingRobotController:
         print('Starting dxl control process.')
         dxl_control_process.start()
         # join all the processes
-        print('Finishing processes.')
         dxl_process.join()
         sensor_process.join()
         aggregator_process.join()
         dxl_control_process.join()
+        print('Finished processes.')
 
     '''shutdown robot'''
     def shutdown(self):
@@ -428,25 +428,25 @@ if __name__ == "__main__":
         UDP_DEST="192.168.1.1",
         UDP_PORT=11223,
         baud_rate=9600,
-        sensor_frequency = 100,
-        dxl_frequency = 5,
+        verbose_aggregator = False,
+        sensor_sample_freq = 100,
+        dxl_sample_freq = 5,
     )
 
     # initialize
     robot_controller = TrainingRobotController(config)
 
-    # load and check traj
-    # debug_traj = [[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 1] for _ in range(100)]
-    # robot_controller.load_debug_trajectory(debug_traj)
-    robot_controller.load_trajectory()
-    if not robot_controller.check_traj():
-        print(len(robot_controller.err_pts))
-        # raise ValueError("Bad trajectory points found.")
+    # load traj
+    debug_traj = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1] for _ in range(100)]
+    robot_controller.load_debug_trajectory(debug_traj)
+    # robot_controller.load_trajectory()
 
-    # run traj
-    print("Starting trajectory.")
-    robot_controller.run_trajectory_parallel()
-    
+    # check traj, then run
+    if robot_controller.check_traj():
+        # run traj
+        print("Starting trajectory.")
+        robot_controller.run_trajectory_parallel()
+        
     # shut down
     print("Done with trajectory, shutting down.")
     robot_controller.shutdown()
