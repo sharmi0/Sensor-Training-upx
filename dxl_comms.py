@@ -1,4 +1,5 @@
 from src.dynamixel_sdk import * 
+import numpy as np
 
 # Control table address
 ADDR_TORQUE_ENABLE      = 64               # Control table address is different in Dynamixel model
@@ -7,7 +8,6 @@ ADDR_GOAL_POSITION      = 116
 ADDR_MOVING_STATUS      = 123
 ADDR_PRESENT_POSITION   = 132
 ADDR_DRIVE_MODE         = 10
-
 
 # Data Byte Length
 LEN_GOAL_POSITION       = 4
@@ -21,7 +21,7 @@ PROTOCOL_VERSION            = 2.0               # See which protocol version is 
 
 # Default setting
 BAUDRATE                    = 2000000             # Dynamixel default baudrate : 57600
-DEVICENAME                  = '/dev/ttyUSB0' #'COM11' #'/dev/ttyUSB0'    # Check which port is being used on your controller
+DEVICENAME                  = '/dev/tty.usbserial-FT6RWE6C' #'COM11' #'/dev/ttyUSB0'    # Check which port is being used on your controller
                                                 # ex) Windows: "COM1"   Linux: "/dev/ttyUSB0" Mac: "/dev/tty.usbserial-*"
 
 TORQUE_ENABLE               = 1                 # Value for enabling the torque
@@ -33,13 +33,16 @@ PROFILE_VELOCITY            = 100               # Maximum velocity of the profil
 DXL_MOVING_STATUS_THRESHOLD = 10                # Dynamixel moving status threshold
 DRIVE_MODE                  = 0
 
+# pulley diameter
+PITCH_D = 28.01  # mm
+
 #DXL Bounds
 x_lims = [0, 2048]
 y1_lims = [500, 3900]
 y2_lims = [145, 3600]
 z_lims = [800, 3340]
-ati_pitch_lims = [1000, 2800]
-ati_roll_lims = [1100, 2565]
+ati_pitch_lims = [1000, 2800] # phi <> pitch
+ati_roll_lims = [1100, 2565] # theta <> roll
 
 def initComms():
     import sys, tty, termios
@@ -52,6 +55,7 @@ def initComms():
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
+    
     # Initialize PortHandler instance
     # Set the port path
     # Get methods and members of PortHandlerLinux or PortHandlerWindows
@@ -80,7 +84,6 @@ def initComms():
         getch()
         quit()
 
-
     # Set port baudrate
     if portHandler.setBaudRate(BAUDRATE):
         print("Succeeded to change the baudrate")
@@ -91,3 +94,52 @@ def initComms():
         quit()
         
     return portHandler, packetHandler, groupSyncWrite, groupSyncRead, groupSyncWrite_PROF_VEL
+
+# helpers 
+def r2p(rad):
+    return round(rad * 2048 / np.pi) + 2048  # radians to pulse counts
+
+def p2r(pulse):
+    return(pulse - 2048) * np.pi / 2048  # pulse counts to radians
+
+'''convert from position value to dxl pulse counts **X**'''    
+def position_to_pulses_x(position):
+    max_counts = 4095
+    return round(position * (max_counts/(np.pi*PITCH_D))) + 1997
+
+'''convert from position value to dxl pulse counts **Y1**'''    
+def position_to_pulses_y1(position):
+    max_counts = 4095
+    return 2098 - round(position * (max_counts/(np.pi*PITCH_D)))
+
+'''convert from position value to dxl pulse counts **Y2**'''    
+def position_to_pulses_y2(position):
+    max_counts = 4095
+    return round(position * (max_counts/(np.pi*PITCH_D))) + 1992
+
+'''convert from position value to dxl pulse counts **Z**'''    
+def position_to_pulses_z(position):
+    max_counts = 4095
+    z_offset = 1680 # was 1740
+    return round(position * (max_counts/(np.pi*PITCH_D))) + z_offset #set z offset to be such that 0 is where the sensor touches the pedestal
+
+
+'''convert from pulse counts to position values **X** '''    
+def pulses_to_position_x(counts):
+    max_counts = 4095
+    return (counts-1997) * (np.pi*PITCH_D)/max_counts
+
+'''convert from pulse counts to position values **Y1**'''    
+def pulses_to_position_y1(counts):
+    max_counts = 4095
+    return (2098-counts) * (np.pi*PITCH_D)/max_counts
+
+'''convert from pulse counts to position values **Y2**'''    
+def pulses_to_position_y2(counts):
+    max_counts = 4095
+    return (counts-1992) * (np.pi*PITCH_D)/max_counts
+
+'''convert from pulse counts to position values **Z**'''    
+def pulses_to_position_z(counts):
+    max_counts = 4095
+    return (counts-1740) * (np.pi*PITCH_D)/max_counts
