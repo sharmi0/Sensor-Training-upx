@@ -21,7 +21,7 @@ PROTOCOL_VERSION            = 2.0               # See which protocol version is 
 
 # Default setting
 BAUDRATE                    = 2000000             # Dynamixel default baudrate : 57600
-DEVICENAME                  = '/dev/ttyUSB0' #'COM11' #'/dev/ttyUSB0'    # Check which port is being used on your controller
+DEVICENAME                  = 'COM4' #'COM11' #'/dev/ttyUSB0'    # Check which port is being used on your controller
                                                 # ex) Windows: "COM1"   Linux: "/dev/ttyUSB0" Mac: "/dev/tty.usbserial-*"
 
 TORQUE_ENABLE               = 1                 # Value for enabling the torque
@@ -42,16 +42,18 @@ ati_pitch_lims = [1000, 2800]
 ati_roll_lims = [1100, 2565]
 
 def initComms():
-    import sys, tty, termios
+    # import sys, tty, termios
+    import sys
+
     fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    def getch():
-        try:
-            tty.setraw(sys.stdin.fileno())
-            ch = sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return ch
+    # old_settings = termios.tcgetattr(fd)
+    # def getch():
+    #     try:
+    #         tty.setraw(sys.stdin.fileno())
+    #         ch = sys.stdin.read(1)
+    #     finally:
+    #         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    #     return ch
     # Initialize PortHandler instance
     # Set the port path
     # Get methods and members of PortHandlerLinux or PortHandlerWindows
@@ -77,7 +79,7 @@ def initComms():
     else:
         print("Failed to open the port")
         print("Press any key to terminate...")
-        getch()
+        # getch()
         quit()
 
 
@@ -87,7 +89,7 @@ def initComms():
     else:
         print("Failed to change the baudrate")
         print("Press any key to terminate...")
-        getch()
+        # getch()
         quit()
         
     return portHandler, packetHandler, groupSyncWrite, groupSyncRead, groupSyncWrite_PROF_VEL
