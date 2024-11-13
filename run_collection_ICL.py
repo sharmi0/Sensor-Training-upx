@@ -25,7 +25,7 @@ class Config:
     sensor_sample_freq: int
     dxl_sample_freq: int
 
-# Robot class
+# Robot class 
 class TrainingRobot:
     """
     Instantiates the Robot with port
@@ -37,6 +37,7 @@ class TrainingRobot:
     def __init__(self, config):
         self.config = config
         self.setup_ethernet()
+        self.setup_mmiba()
         self.setup_dxl()
 
     def setup_ethernet(self):
@@ -46,6 +47,18 @@ class TrainingRobot:
             socket.SOCK_DGRAM,
         )  # UDP
         self.sock.bind((self.config.UDP_IP, self.config.UDP_PORT))
+
+    def setup_mmiba(self):
+        self.mmiba_ser = serial.Serial(
+            port='/dev/tty.usbmodem21303',
+            baudrate=921600,
+            timeout=1
+        )
+        if self.mmiba_ser.isOpen():
+            print(f"Serial port {self.mmiba_ser.port} is open.")
+        else:
+            print(f"Failed to open serial port {self.mmiba_ser.port}.")
+            exit()
 
     def setup_dxl(self):
         # create comms for dynamixels
@@ -90,9 +103,25 @@ class TrainingRobot:
         # only return time, fx, fy, fz
         return float_data[0:4]
     
-    def get_icl_data(self):
-        """Pull data from icl sensor over serial"""
-        return [0]*36
+    def get_mmiba_data(self):
+        """Pull data from mmiba sensor over serial"""
+
+        # TODO: do this with try except, better way to handle case when data dimension changes unexpectedly?
+        float_data = [0.0]*36
+        data = self.mmiba_ser.readline()
+        try:
+            split_data = data.decode().strip().split(",")
+            if (len(split_data) != 37):
+                print("Bad serial data from mmiba: wrong length.")
+                self.mmiba_ser.flush()
+            else:
+                for d in range(len(split_data)-1):
+                    float_data[d] = float(split_data[d])
+        except:
+            print("Bad serial data from mmiba: cannot decode.")
+            self.mmiba_ser.flush()
+
+        return float_data
 
     def get_dxl_data(self):
         """Write dxl data to present_position"""
@@ -127,7 +156,7 @@ class TrainingRobot:
 # Functions for multiprocesssing
 
 # sampling
-def sensor_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
+def ati_sample_worker(robot, start_time, loop_time, ati_queue, done_flag):
     overrun_count = 0
     i = 0
     while done_flag.value == 0:
@@ -141,12 +170,34 @@ def sensor_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
             if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
                 raise ValueError("Overran too much")
         # Sample data
-        ati_sample = robot.get_ati_data()
-        icl_sample = robot.get_icl_data()
-        sample = ati_sample + icl_sample # ati data is 4 values, icl data is 36 values
-        data_queue.put(sample)
+        sample = robot.get_ati_data()
+        # mmiba_sample = robot.get_mmiba_data()
+        # sample = ati_sample + mmiba_sample # ati data is 4 values, mmiba data is 36 values
+        ati_queue.put(sample)
         i += 1
-    print("Sensor sample loop overruns: ", overrun_count)
+    print("ATI sample loop overruns: ", overrun_count)
+
+def mmiba_sample_worker(robot, start_time, loop_time, mmiba_queue, done_flag):
+    overrun_count = 0
+    i = 0
+    while done_flag.value == 0:
+        # Wait for the next sample time
+        sleep_time = start_time + i * loop_time - time.perf_counter()
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+        elif sleep_time < 0 and -sleep_time < loop_time:
+            print(f"Loop overran for {sleep_time}")
+            overrun_count += 1
+            if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
+                raise ValueError("Overran too much")
+        # Always try to sample data
+        sample = robot.get_mmiba_data()
+        # # Based on sample time, put the data in the queue
+        # sample_time = start_time + i * loop_time - time.perf_counter()
+        # if sample_time < 0 and -sample_time < loop_time:      
+        mmiba_queue.put(sample)
+        i += 1
+    print("mmiba sample loop overruns: ", overrun_count)
 
 def dxl_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
     overrun_count = 0
@@ -168,10 +219,11 @@ def dxl_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
     print("DXL sample loop overruns: ", overrun_count)
 
 # aggregation
-def aggregator_worker(data_dir_name, sensor_queue, dxl_queue, sensor_sample_freq, dxl_sample_freq, done_flag, tare_flag, data_valid_flag, verbose_flag):
+def aggregator_worker(data_dir_name, ati_queue, mmiba_queue, dxl_queue, sensor_sample_freq, dxl_sample_freq, done_flag, tare_flag, data_valid_flag, verbose_flag):
 
     dxl_period = int(sensor_sample_freq / dxl_sample_freq)
-    sensor_data = None
+    ati_data = None
+    mmiba_data = None
     dxl_data = None
 
     all_data = []
@@ -180,24 +232,33 @@ def aggregator_worker(data_dir_name, sensor_queue, dxl_queue, sensor_sample_freq
     j = 0
     while (done_flag.value == 0):
         try:
-            sensor_data = sensor_queue.get(block=True, timeout=10)
+            ati_data = ati_queue.get(block=True, timeout=10)
+        except:
+            print("Lost ATI data collection!")
+            continue
 
+        try:
+            mmiba_data = mmiba_queue.get(block=True, timeout=10)
+        except:
+            print("Lost mmiba data collection!")
+            continue
+
+        try:
             if i % dxl_period == 0:
                 dxl_data = dxl_queue.get(block=True, timeout=10)
         except:
-            print("Lost data collection")
-            break
+            print("Lost DXL data collection!")
+            continue
 
-        # print("hi")
         with data_valid_flag.get_lock():
             data_valid = data_valid_flag.value
         
-        combo_data = sensor_data + dxl_data + [data_valid] # dxl data is just the most recent one
+        combo_data = ati_data + mmiba_data + dxl_data + [data_valid] # dxl data is just the most recent one
 
-        # sensor data is now 4 ati values plus 36 icl values
+        # sensor data is now 4 ati values plus 36 mmiba values
         if verbose_flag:
             for j in range(1, 40): # essentially don't print time
-                print(f"{sensor_data[j]:+.4f}", end = " ")
+                print(f"{combo_data[j]:+.4f}", end = " ")
             print(len(all_data))
         #         tare_flag.value = 0
         #         all_data.append([-1 for _ in range(len(combo_data))])
@@ -211,7 +272,6 @@ def aggregator_worker(data_dir_name, sensor_queue, dxl_queue, sensor_sample_freq
             j += 1
         i += 1
     
-
     data_filename = os.path.join(data_dir_name, f"segment_{j}.npy")
     print("Saving: ", data_filename)
     np.save(data_filename, all_data)
@@ -269,6 +329,7 @@ def dxl_control_worker(robot, commands, done_flag, tare_flag, data_valid_flag):
         robot.groupSyncWrite.clearParam()
         time.sleep(t_dwell) # wait for dxl to get to their positions
     
+    print("Done!")
     done_flag.value = 1
 
 
@@ -380,7 +441,8 @@ class TrainingRobotController:
         start_time = time.perf_counter() + 1.0
 
         dxl_queue = Queue()
-        sensor_queue = Queue()
+        ati_queue = Queue()
+        mmiba_queue = Queue()
         
         done_flag = Value('i', 0)
         tare_flag = Value('i', 0)
@@ -388,10 +450,12 @@ class TrainingRobotController:
         
         dxl_process = multiprocess.Process(target=dxl_sample_worker, 
                 args=(self.robot, start_time, dxl_loop_time, dxl_queue, done_flag))
-        sensor_process = multiprocess.Process(target=sensor_sample_worker, 
-                args=(self.robot, start_time, sensor_loop_time, sensor_queue, done_flag))
+        ati_process = multiprocess.Process(target=ati_sample_worker, 
+                args=(self.robot, start_time, sensor_loop_time, ati_queue, done_flag))
+        mmiba_process = multiprocess.Process(target=mmiba_sample_worker, 
+                args=(self.robot, start_time, sensor_loop_time, mmiba_queue, done_flag))
         aggregator_process = multiprocess.Process(target=aggregator_worker,
-                args=(self.data_dir_name, sensor_queue, dxl_queue, self.config.sensor_sample_freq, self.config.dxl_sample_freq,
+                args=(self.data_dir_name, ati_queue, mmiba_queue, dxl_queue, self.config.sensor_sample_freq, self.config.dxl_sample_freq,
                         done_flag, tare_flag, data_valid_flag, self.config.verbose_aggregator))
         dxl_control_process = multiprocess.Process(target=dxl_control_worker,
                                                       args=(self.robot, self.commands, done_flag, tare_flag, data_valid_flag))
@@ -399,7 +463,8 @@ class TrainingRobotController:
         print('Starting dxl data process.')
         dxl_process.start()
         print('Starting sensor data process.')
-        sensor_process.start()
+        ati_process.start()
+        mmiba_process.start()
         print('Starting aggregator process.')
         aggregator_process.start()
         time.sleep(1.0)
@@ -408,7 +473,8 @@ class TrainingRobotController:
         dxl_control_process.start()
         # join all the processes
         dxl_process.join()
-        sensor_process.join()
+        ati_process.join()
+        mmiba_process.join()
         aggregator_process.join()
         dxl_control_process.join()
         print('Finished processes.')
@@ -437,7 +503,7 @@ if __name__ == "__main__":
     robot_controller = TrainingRobotController(config)
 
     # load traj
-    debug_traj = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1] for _ in range(100)]
+    debug_traj = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 1] for _ in range(100)]
     robot_controller.load_debug_trajectory(debug_traj)
     # robot_controller.load_trajectory()
 
