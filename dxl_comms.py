@@ -21,7 +21,7 @@ PROTOCOL_VERSION            = 2.0               # See which protocol version is 
 
 # Default setting
 BAUDRATE                    = 2000000             # Dynamixel default baudrate : 57600
-DEVICENAME                  = '/dev/tty.usbserial-FT6RWE6C' #'COM11' #'/dev/ttyUSB0'    # Check which port is being used on your controller
+DEVICENAME                  = '/dev/ttyUSB0' #'COM11' #'/dev/ttyUSB0'    # Check which port is being used on your controller
                                                 # ex) Windows: "COM1"   Linux: "/dev/ttyUSB0" Mac: "/dev/tty.usbserial-*"
 
 TORQUE_ENABLE               = 1                 # Value for enabling the torque
@@ -73,7 +73,6 @@ def initComms():
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
-    
     # Initialize PortHandler instance
     # Set the port path
     # Get methods and members of PortHandlerLinux or PortHandlerWindows
