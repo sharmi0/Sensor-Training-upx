@@ -24,6 +24,11 @@ class Config:
     verbose_aggregator: bool
     sensor_sample_freq: int
     dxl_sample_freq: int
+    dxl_z_offset: int # dxl position when sensor touches pedestal, in counts
+    dxl_roll_offset: int
+    dxl_pitch_offset: int
+    home_x_offset: float
+    home_y_offset: float
 
 # Robot class 
 class TrainingRobot:
@@ -108,20 +113,24 @@ class TrainingRobot:
 
         # TODO: do this with try except, better way to handle case when data dimension changes unexpectedly?
         float_data = [0.0]*36
+        bad_data = 0
+        # self.mmiba_ser.flush()
         data = self.mmiba_ser.readline()
         try:
             split_data = data.decode().strip().split(",")
             if (len(split_data) != 37):
                 print("Bad serial data from mmiba: wrong length.")
-                self.mmiba_ser.flush()
+                bad_data = 1
+                # self.mmiba_ser.flush()
             else:
                 for d in range(len(split_data)-1):
                     float_data[d] = float(split_data[d])
         except:
             print("Bad serial data from mmiba: cannot decode.")
-            self.mmiba_ser.flush()
+            bad_data = 1
+            # self.mmiba_ser.flush()
 
-        return float_data
+        return float_data, bad_data
 
     def get_dxl_data(self):
         """Write dxl data to present_position"""
@@ -179,25 +188,62 @@ def ati_sample_worker(robot, start_time, loop_time, ati_queue, done_flag):
 
 def mmiba_sample_worker(robot, start_time, loop_time, mmiba_queue, done_flag):
     overrun_count = 0
+    bad_data_count = 0
     i = 0
+
+    good_sample = [0.0]*36
     while done_flag.value == 0:
+
+        sample, bad_data = robot.get_mmiba_data()
+
+        sample_time = start_time + i * loop_time - time.perf_counter()
+
+        if not bad_data:
+            good_sample = sample
+        else:
+            bad_data_count += 1
+
+        if sample_time < 0:
+            mmiba_queue.put(good_sample)
+            i += 1
+        else:
+            continue
+
+        # if sample_time < 0 and -sample_time < loop_time:
+        #     print(f"Loop overran for {sample_time}")
+        #     overrun_count += 1
+        #     if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
+        #         raise ValueError("Overran too much")
+        # elif sample_time > 0:
+        #     mmiba_queue.put(sample)
+        # else:
+        #     continue
+
+
+
         # Wait for the next sample time
-        sleep_time = start_time + i * loop_time - time.perf_counter()
-        if sleep_time > 0:
-            time.sleep(sleep_time)
-        elif sleep_time < 0 and -sleep_time < loop_time:
-            print(f"Loop overran for {sleep_time}")
-            overrun_count += 1
-            if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
-                raise ValueError("Overran too much")
-        # Always try to sample data
-        sample = robot.get_mmiba_data()
+        # sleep_time = start_time + i * loop_time - time.perf_counter()
+
+
+        # if sleep_time > 0:
+        #     time.sleep(sleep_time)
+        # elif sleep_time < 0 and -sleep_time < loop_time:
+        #     print(f"Loop overran for {sleep_time}")
+        #     overrun_count += 1
+        #     if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
+        #         raise ValueError("Overran too much")
+        # # Always try to sample data
+        # sample, bad_data = robot.get_mmiba_data()
+        # bad_data_count += bad_data
+
+
         # # Based on sample time, put the data in the queue
         # sample_time = start_time + i * loop_time - time.perf_counter()
-        # if sample_time < 0 and -sample_time < loop_time:      
-        mmiba_queue.put(sample)
-        i += 1
+        # # if sample_time < 0 and -sample_time < loop_time:      
+        # mmiba_queue.put(sample)
+        # i += 1
     print("mmiba sample loop overruns: ", overrun_count)
+    print("mmiba bad data count: ", bad_data_count)
 
 def dxl_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
     overrun_count = 0
@@ -219,41 +265,50 @@ def dxl_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
     print("DXL sample loop overruns: ", overrun_count)
 
 # aggregation
-def aggregator_worker(data_dir_name, ati_queue, mmiba_queue, dxl_queue, sensor_sample_freq, dxl_sample_freq, done_flag, tare_flag, data_valid_flag, verbose_flag):
+def aggregator_worker(data_dir_name, ati_queue, mmiba_queue, dxl_queue, dxl_command_queue, sensor_sample_freq, dxl_sample_freq, done_flag, tare_flag, data_valid_flag, verbose_flag):
 
     dxl_period = int(sensor_sample_freq / dxl_sample_freq)
     ati_data = None
     mmiba_data = None
     dxl_data = None
 
+    dxl_command_data = [0, 0, 0, 0]
+
     all_data = []
     data_valid = 0 
     i = 0
     j = 0
+    
     while (done_flag.value == 0):
         try:
             ati_data = ati_queue.get(block=True, timeout=10)
         except:
             print("Lost ATI data collection!")
-            continue
+            # continue
 
         try:
             mmiba_data = mmiba_queue.get(block=True, timeout=10)
         except:
             print("Lost mmiba data collection!")
-            continue
+            # continue
 
         try:
             if i % dxl_period == 0:
                 dxl_data = dxl_queue.get(block=True, timeout=10)
         except:
             print("Lost DXL data collection!")
-            continue
+            # continue
+
+        try:
+            dxl_command_data = dxl_command_queue.get(block=False, timeout=10)
+        except:
+            # do nothing
+            pass
 
         with data_valid_flag.get_lock():
             data_valid = data_valid_flag.value
         
-        combo_data = ati_data + mmiba_data + dxl_data + [data_valid] # dxl data is just the most recent one
+        combo_data = ati_data + mmiba_data + dxl_data + [data_valid] + dxl_command_data # dxl data is just the most recent one
 
         # sensor data is now 4 ati values plus 36 mmiba values
         if verbose_flag:
@@ -281,11 +336,11 @@ def aggregator_worker(data_dir_name, ati_queue, mmiba_queue, dxl_queue, sensor_s
 
 
 # motor control
-def dxl_control_worker(robot, commands, done_flag, tare_flag, data_valid_flag):
+def dxl_control_worker(robot, commands, dxl_command_queue, done_flag, tare_flag, data_valid_flag):
     
-    pbar = tqdm.tqdm(enumerate(commands), total=len(commands))
+    # pbar = tqdm.tqdm(enumerate(commands), total=len(commands))
     data_valid = True
-    for i, command in pbar:
+    for i, command in enumerate(commands):
         # print("\nContact %d of %d\n" % (j+1,len(self.commands)))
 
         # update and send dynamixel positions
@@ -298,11 +353,15 @@ def dxl_control_worker(robot, commands, done_flag, tare_flag, data_valid_flag):
 
         t_dwell = command[6]
         I_tare = command[7]
-
+        point_idx = command[8]
         
         dxl_commands = [dxlx_des, dxly1_des, dxly2_des, dxlz_des, dxlt_des, dxlp_des]
         # print("DXL COMMAND: ", dxl_commands)
         # print(dxl_commands)
+
+        # put some of the relevant commands in the queue
+        command_info = [pulses_to_position_x(dxlx_des), pulses_to_position_y1(dxly1_des), pulses_to_position_z(dxlz_des), point_idx]
+        dxl_command_queue.put(command_info)
 
         if i == 0 or dxlt_des != commands[i-1][4] or dxlp_des != commands[i-1][5]:
             with data_valid_flag.get_lock():
@@ -329,7 +388,8 @@ def dxl_control_worker(robot, commands, done_flag, tare_flag, data_valid_flag):
         robot.groupSyncWrite.clearParam()
         time.sleep(t_dwell) # wait for dxl to get to their positions
     
-    print("Done!")
+
+    print("Done with trajectory.")
     done_flag.value = 1
 
 
@@ -344,7 +404,8 @@ class TrainingRobotController:
             "s2_1": 16, "s2_2": 17, "s2_3": 18, "s2_4": 19, "s2_5": 20, "s2_6": 21, "s2_7": 22, "s2_8": 23, "s2_9": 24, "s2_10": 25, "s2_11": 26, "s2_12": 27,
             "s3_1": 28, "s3_2": 29, "s3_3": 30, "s3_4": 31, "s3_5": 32, "s3_6": 33, "s3_7": 34, "s3_8": 35, "s3_9": 36, "s3_10": 37, "s3_11": 38, "s3_12": 39,
             "x_act": 40, "y1_act": 41, "y2_act": 42, "z_act": 43, "theta_act": 44, "phi_act": 45, 
-            "data_valid": 46}
+            "data_valid": 46,
+            "x_des": 47, "y_des": 48, "z_des": 49, "point_idx": 50}
 
     config = None
 
@@ -375,30 +436,41 @@ class TrainingRobotController:
 
         # calculate dynamixel positions
         # traj data = x, y, z, theta, phi
-        commands_x = position_to_pulses_x(float(traj_data[0]))
-        commands_y1 = position_to_pulses_y1(float(traj_data[1]))
-        commands_y2 = position_to_pulses_y2(float(traj_data[1]))
-        commands_z = position_to_pulses_z(float(traj_data[2]))
+        commands_x = position_to_pulses_x(float(traj_data[0]) + self.config.home_x_offset)
+        commands_y1 = position_to_pulses_y1(float(traj_data[1]) + self.config.home_y_offset)
+        commands_y2 = position_to_pulses_y2(float(traj_data[1]) + self.config.home_y_offset)
+        commands_z = position_to_pulses_z(float(traj_data[2]), self.config.dxl_z_offset)
 
-        commands_roll = r2p(float(traj_data[3])) # theta <> roll
-        commands_pitch = r2p(float(traj_data[4])) # phi <> pitch
+        commands_roll = r2p(float(traj_data[3])) + self.config.dxl_roll_offset # theta <> roll
+        commands_pitch = r2p(float(traj_data[4])) + self.config.dxl_pitch_offset # phi <> pitch
 
         commands_tdwell = traj_data[5]
         commands_Itare = traj_data[6]
 
+        commands_point_idx = traj_data[7]
+
         # check to make sure all commands are within gantry lims
-        if (
-            (commands_y1 < y1_lims[0] or commands_y1 > y1_lims[1])
-            or (commands_y2 < y2_lims[0] or commands_y2 > y2_lims[1])
-            or (commands_z < z_lims[0] or commands_z > z_lims[1])
-            or (
-                commands_roll < ati_roll_lims[0] or commands_roll > ati_roll_lims[1]
-            )
-            or (commands_pitch < ati_pitch_lims[0] or commands_pitch > ati_pitch_lims[1])
-        ):
+        x_command_err = (commands_x < x_lims[0] or commands_x > x_lims[1])
+        y_command_err = (commands_y1 < y1_lims[0] or commands_y1 > y1_lims[1]) or (commands_y2 < y2_lims[0] or commands_y2 > y2_lims[1])
+        z_command_err = (commands_z < z_lims[0])
+        if (commands_z > z_lims[1]):
+            commands_z = z_lims[1]
+        roll_command_err = (commands_roll < ati_roll_lims[0] or commands_roll > ati_roll_lims[1])
+        pitch_command_err = (commands_pitch < ati_pitch_lims[0] or commands_pitch > ati_pitch_lims[1])
+        if (x_command_err or y_command_err or z_command_err or roll_command_err or pitch_command_err):
             self.err_pts.append([commands_x, commands_y1, commands_y2, commands_z, commands_roll, commands_pitch])
+            if x_command_err:
+                print("X command out of bounds.")
+            if y_command_err:
+                print("Y command out of bounds.")
+            if z_command_err:
+                print("Z command out of bounds.")
+            if roll_command_err:
+                print("Roll command out of bounds.")
+            if pitch_command_err:
+                print("Pitch command out of bounds.")
         else:
-            new_command = [commands_x, commands_y1, commands_y2, commands_z, commands_roll, commands_pitch, commands_tdwell, commands_Itare]
+            new_command = [commands_x, commands_y1, commands_y2, commands_z, commands_roll, commands_pitch, commands_tdwell, commands_Itare, commands_point_idx]
             print(new_command)
             # append commands
             self.commands.append(tuple(new_command))
@@ -443,7 +515,8 @@ class TrainingRobotController:
         dxl_queue = Queue()
         ati_queue = Queue()
         mmiba_queue = Queue()
-        
+        dxl_command_queue = Queue()
+
         done_flag = Value('i', 0)
         tare_flag = Value('i', 0)
         data_valid_flag = Value('i', 1)
@@ -455,10 +528,10 @@ class TrainingRobotController:
         mmiba_process = multiprocess.Process(target=mmiba_sample_worker, 
                 args=(self.robot, start_time, sensor_loop_time, mmiba_queue, done_flag))
         aggregator_process = multiprocess.Process(target=aggregator_worker,
-                args=(self.data_dir_name, ati_queue, mmiba_queue, dxl_queue, self.config.sensor_sample_freq, self.config.dxl_sample_freq,
+                args=(self.data_dir_name, ati_queue, mmiba_queue, dxl_queue, dxl_command_queue, self.config.sensor_sample_freq, self.config.dxl_sample_freq,
                         done_flag, tare_flag, data_valid_flag, self.config.verbose_aggregator))
         dxl_control_process = multiprocess.Process(target=dxl_control_worker,
-                                                      args=(self.robot, self.commands, done_flag, tare_flag, data_valid_flag))
+                                                      args=(self.robot, self.commands, dxl_command_queue, done_flag, tare_flag, data_valid_flag))
         # -- Start data collection -- #
         print('Starting dxl data process.')
         dxl_process.start()
@@ -488,8 +561,8 @@ class TrainingRobotController:
 # run
 if __name__ == "__main__":
     config = Config(
-        log_save_name = "DEBUG",
-        trajectory_filename="trajectories/mmibaTrajectory_1.npy",
+        log_save_name = "SINGLEPRESS_BP_COMBO",
+        trajectory_filename="trajectories/mmibaTrajectorysingle_press_2.npy",
         UDP_IP="192.168.1.201",
         UDP_DEST="192.168.1.1",
         UDP_PORT=11223,
@@ -497,15 +570,20 @@ if __name__ == "__main__":
         verbose_aggregator = False,
         sensor_sample_freq = 100,
         dxl_sample_freq = 5,
+        dxl_z_offset = 1800, # dxl position when sensor touches pedestal, in counts (1635 for vytaflex, 1750 for ecoflex)
+        dxl_roll_offset = 15, # in counts
+        dxl_pitch_offset = 0, # in counts
+        home_x_offset = -0.5, # in mm
+        home_y_offset = -1.0, # in mm
     )
 
     # initialize
     robot_controller = TrainingRobotController(config)
 
     # load traj
-    debug_traj = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 1] for _ in range(100)]
-    robot_controller.load_debug_trajectory(debug_traj)
-    # robot_controller.load_trajectory()
+    # debug_traj = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 1, 20] for _ in range(10)]
+    # robot_controller.load_debug_trajectory(debug_traj)
+    robot_controller.load_trajectory()
 
     # check traj, then run
     if robot_controller.check_traj():
