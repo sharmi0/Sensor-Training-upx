@@ -8,6 +8,7 @@ ADDR_GOAL_POSITION      = 116
 ADDR_MOVING_STATUS      = 123
 ADDR_PRESENT_POSITION   = 132
 ADDR_DRIVE_MODE         = 10
+ADDR_VELOCITY_LIMIT     = 44
 
 # Data Byte Length
 LEN_GOAL_POSITION       = 4
@@ -15,6 +16,7 @@ LEN_PRESENT_POSITION    = 4
 LEN_MOVING_STATUS       = 1
 LEN_PROFILE_VELOCITY    = 4
 LEN_DRIVE_MODE          = 1
+LEN_VELOCITY_LIMIT      = 4
 
 # Protocol version
 PROTOCOL_VERSION            = 2.0               # See which protocol version is used in the Dynamixel
@@ -27,8 +29,12 @@ DEVICENAME                  = '/dev/ttyUSB0' #'COM11' #'/dev/ttyUSB0'    # Check
 TORQUE_ENABLE               = 1                 # Value for enabling the torque
 TORQUE_DISABLE              = 0                 # Value for disabling the torque
 
-#PROFILE_VELOCITY            = 1               # Maximum velocity of the profile (if drive mode is set to 0 which should be default)
+# PROFILE_VELOCITY            = 1               # Maximum velocity of the profile (if drive mode is set to 0 which should be default)
 PROFILE_VELOCITY            = 100               # Maximum velocity of the profile (if drive mode is set to 1)
+
+VELOCITY_LIMIT_CALIBRATE              = 10                #default value is 330, unit: 0.229 [rev/min]
+VELOCITY_LIMIT_NOMINAL                = 330               #default value is 330, unit: 0.229 [rev/min]
+
 
 DXL_MOVING_STATUS_THRESHOLD = 10                # Dynamixel moving status threshold
 DRIVE_MODE                  = 0
