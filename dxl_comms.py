@@ -1,5 +1,4 @@
-from src.dynamixel_sdk import * 
-import numpy as np
+from src.dynamixel_sdk import *
 
 # Control table address
 ADDR_TORQUE_ENABLE      = 64               # Control table address is different in Dynamixel model
@@ -118,12 +117,12 @@ def initComms():
         
     return portHandler, packetHandler, groupSyncWrite, groupSyncRead, groupSyncWrite_PROF_VEL
 
-# helpers 
-def r2p(rad):
-    return round(rad * 2048 / np.pi) + 2048  # radians to pulse counts
+# # helpers 
+# def r2p(rad):
+#     return round(rad * 2048 / np.pi) + 2048  # radians to pulse counts
 
-def p2r(pulse):
-    return(pulse - 2048) * np.pi / 2048  # pulse counts to radians
+# def p2r(pulse):
+#     return(pulse - 2048) * np.pi / 2048  # pulse counts to radians
 
 # '''convert from position value to dxl pulse counts **X**'''    
 # def position_to_pulses_x(position):

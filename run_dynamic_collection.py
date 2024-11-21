@@ -194,48 +194,81 @@ class TrainingRobotController:
         # self.key_filename = (
         #     "raw_data/key_" + cur_time + "_" + self.config.log_save_name + ".npy"
         # )
+    #*************** functions before recalibration ****************
+    # '''convert from position value to dxl pulse counts **X**'''    
+    # def position_to_pulses_x(self, position):
+    #     max_counts = 4095
+    #     return round(position * (max_counts/(np.pi*self.pitch_d))) + 1997
+    
+    # '''convert from position value to dxl pulse counts **Y1**'''    
+    # def position_to_pulses_y1(self, position):
+    #     max_counts = 4095
+    #     return 2098 - round(position * (max_counts/(np.pi*self.pitch_d)))
+    
+    # '''convert from position value to dxl pulse counts **Y2**'''    
+    # def position_to_pulses_y2(self, position):
+    #     max_counts = 4095
+    #     return round(position * (max_counts/(np.pi*self.pitch_d))) + 1992
+    
+    # '''convert from position value to dxl pulse counts **Z**'''    
+    # def position_to_pulses_z(self, position):
+    #     max_counts = 4095
+    #     z_offset = 1680 # was 1740
+    #     return round(position * (max_counts/(np.pi*self.pitch_d))) + z_offset #set z offset to be such that 0 is where the sensor touches the pedestal
+    
 
+    # '''convert from pulse counts to position values **X** '''    
+    # def pulses_to_position_x(self, counts):
+    #     max_counts = 4095
+    #     return (counts-1997) * (np.pi*self.pitch_d)/max_counts
+    
+    # '''convert from pulse counts to position values **Y1**'''    
+    # def pulses_to_position_y1(self, counts):
+    #     max_counts = 4095
+    #     return (2098-counts) * (np.pi*self.pitch_d)/max_counts
+    
+    # '''convert from pulse counts to position values **Y2**'''    
+    # def pulses_to_position_y2(self, counts):
+    #     max_counts = 4095
+    #     return (counts-1992) * (np.pi*self.pitch_d)/max_counts
+    
+    # '''convert from pulse counts to position values **Z**'''    
+    # def pulses_to_position_z(self, counts):
+    #     max_counts = 4095
+    #     return (counts-1740) * (np.pi*self.pitch_d)/max_counts
+    #********************************************************************
     '''convert from position value to dxl pulse counts **X**'''    
     def position_to_pulses_x(self, position):
-        max_counts = 4095
-        return round(position * (max_counts/(np.pi*self.pitch_d))) + 1997
-    
+        return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048
+
     '''convert from position value to dxl pulse counts **Y1**'''    
     def position_to_pulses_y1(self, position):
-        max_counts = 4095
-        return 2098 - round(position * (max_counts/(np.pi*self.pitch_d)))
-    
+        return 2048 - round(position * (MAX_COUNTS/(np.pi*PITCH_D)))
+
     '''convert from position value to dxl pulse counts **Y2**'''    
     def position_to_pulses_y2(self, position):
-        max_counts = 4095
-        return round(position * (max_counts/(np.pi*self.pitch_d))) + 1992
-    
+        return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048
+
     '''convert from position value to dxl pulse counts **Z**'''    
     def position_to_pulses_z(self, position):
-        max_counts = 4095
-        z_offset = 1680 # was 1740
-        return round(position * (max_counts/(np.pi*self.pitch_d))) + z_offset #set z offset to be such that 0 is where the sensor touches the pedestal
-    
+        return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + Z_OFFSET #set z offset to be such that 0 is where the sensor touches the pedestal
+
 
     '''convert from pulse counts to position values **X** '''    
     def pulses_to_position_x(self, counts):
-        max_counts = 4095
-        return (counts-1997) * (np.pi*self.pitch_d)/max_counts
-    
+        return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
+
     '''convert from pulse counts to position values **Y1**'''    
     def pulses_to_position_y1(self, counts):
-        max_counts = 4095
-        return (2098-counts) * (np.pi*self.pitch_d)/max_counts
-    
+        return (2048-counts) * (np.pi*PITCH_D)/MAX_COUNTS
+
     '''convert from pulse counts to position values **Y2**'''    
     def pulses_to_position_y2(self, counts):
-        max_counts = 4095
-        return (counts-1992) * (np.pi*self.pitch_d)/max_counts
-    
+        return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
+
     '''convert from pulse counts to position values **Z**'''    
     def pulses_to_position_z(self, counts):
-        max_counts = 4095
-        return (counts-1740) * (np.pi*self.pitch_d)/max_counts
+        return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
 
     # def add_point(self, traj_data, save_data):
     #     """add a trajectory point"""
@@ -809,10 +842,10 @@ if __name__ == "__main__":
     
     robot = TrainingRobotController(config)
 
-    debug_traj = [[0.0, 00.0,  10.0, 0.0, 0.0, 0.0, 1] for _ in range(100000)]
+    debug_traj = [[0.0, 00.0,  0.0, 0.0, 0.0, 0.0, 1] for _ in range(100000)]
 
-    # robot.load_debug_trajectory(debug_traj)
-    robot.load_trajectory(n_commands = None)
+    robot.load_debug_trajectory(debug_traj)
+    # robot.load_trajectory(n_commands = None)
     
     if not robot.check_traj():
         print(len(robot.err_pts))
