@@ -10,20 +10,6 @@ from dxl_comms import *
 import dxl_comms
 #connect to ATI
 
-
- ### MAIN SCRIPT TO RUN DELTA ROBOT AND DXL STAGE FOR TRAINING TRAJECTORY ###
-
-# import
-import os
-import numpy as np
-import socket
-import serial
-import time
-import csv
-from datetime import datetime as dt
-from dxl_comms import *
-
-
 # set up ethernet for logging
 UDP_IP = "192.168.1.201"  #IP of this PC (make sure ethernet settings are set to this ip)
 UDP_DEST = "192.168.1.1" #IP of Nucleo Board
@@ -66,7 +52,7 @@ class TrainingRobotController:
         
         #Add velocity profile
         for i in range(len(dxl_ids)):
-            param_profile_velocity = [DXL_LOBYTE(DXL_LOWORD(PROFILE_VELOCITY)), DXL_HIBYTE(DXL_LOWORD(PROFILE_VELOCITY)), DXL_LOBYTE(DXL_HIWORD(PROFILE_VELOCITY)), DXL_HIBYTE(DXL_HIWORD(PROFILE_VELOCITY))]
+            param_profile_velocity = [DXL_LOBYTE(DXL_LOWORD(PROFILE_VELOCITY_CALIBRATE)), DXL_HIBYTE(DXL_LOWORD(PROFILE_VELOCITY_CALIBRATE)), DXL_LOBYTE(DXL_HIWORD(PROFILE_VELOCITY_CALIBRATE)), DXL_HIBYTE(DXL_HIWORD(PROFILE_VELOCITY_CALIBRATE))]
             dxl_addparam_result = self.groupSyncWrite_PROF_VEL.addParam(dxl_ids[i], param_profile_velocity)
 
         dxl_comm_result = self.groupSyncWrite_PROF_VEL.txPacket()
@@ -101,10 +87,10 @@ class TrainingRobotController:
         self.moving_status = np.array([0, 0, 0, 0, 0, 0])
         self.pitch_d = 28.01 #mm
         # TODO: add an initial set of dynamixel commands to self.commands if needed 
-        #TODO: set max speed 
+        #TODO: set max speed
         self.err_pts = []
         self.position_diff = np.array([0,0,0,0,0,0])
-            
+        
     
         # TODO: add header to csv file here!
         '''convert from position value to dxl pulse counts **X**'''    
@@ -121,8 +107,7 @@ class TrainingRobotController:
 
     '''convert from position value to dxl pulse counts **Z**'''    
     def position_to_pulses_z(self, position):
-        return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + Z_OFFSET #set z offset to be such that 0 is where the sensor touches the pedestal
-
+        return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048 #set z offset to be such that 0 is where the sensor touches the pedestal
 
     '''convert from pulse counts to position values **X** '''    
     def pulses_to_position_x(self, counts):
@@ -143,15 +128,23 @@ class TrainingRobotController:
     def run_z_calibration(self):
         #TODOs:
         # only need to read and write to z value
-        z_home_coord = 10 # mm
-        z_approach_coord = 0 # mm
+        z_dxl_ind = 3
+        z_home_coord = 0 # mm
+        z_approach_coord = -20 # mm
+        y_approach_coord = 10.68 #for ellipsoid: 10.68 #mm
 
-        z_home_coord_counts = position_to_pulses_z(z_home_coord)
-        z_approach_coord_counts = position_to_pulses_z(z_approach_coord)
+        z_home_coord_counts = self.position_to_pulses_z(z_home_coord)
+        z_approach_coord_counts = self.position_to_pulses_z(z_approach_coord)
+        y1_approach_coord_counts = self.position_to_pulses_y1(y_approach_coord)
+        y2_approach_coord_counts = self.position_to_pulses_y2(y_approach_coord)
 
-        home_coordinate = [0, 0, 0, z_home_coord_counts, 0, 0]
-        approach_coordinate = [0, 0, 0, z_approach_coord_counts, 0, 0]
+        home_coordinate = [2048, y1_approach_coord_counts, y2_approach_coord_counts, z_home_coord_counts, 2048, 2048]
+        approach_coordinate = [2048, y1_approach_coord_counts, y2_approach_coord_counts, z_approach_coord_counts, 2048, 2048]
 
+        print("home coordinate: ", home_coordinate)
+        print("approach coordinate: ", approach_coordinate)
+
+        
         #check to make sure all commands are within Z gantry lims
         if z_home_coord_counts < z_lims[0] or z_home_coord_counts > z_lims[1]:
             print("home coordinate is out of bounds")
@@ -162,7 +155,7 @@ class TrainingRobotController:
             return
 
         prev_ati_value = 0
-        diff_thresh = 0.1 #N
+        diff_thresh = 0.5 #N
 
         # go to home coordinate
         for i in range(len(dxl_ids)):
@@ -174,18 +167,10 @@ class TrainingRobotController:
         # Clear syncwrite parameter storage
         self.groupSyncWrite.clearParam()
 
-        #WAIT to reach position
+        time.sleep(4)
 
-        #Add velocity limit
-        for i in range(len(dxl_ids)):
-            param_velocity_limit = [DXL_LOBYTE(DXL_LOWORD(VELOCITY_LIMIT_CALIBRATE)), DXL_HIBYTE(DXL_LOWORD(VELOCITY_LIMIT_CALIBRATE)), DXL_LOBYTE(DXL_HIWORD(VELOCITY_LIMIT_CALIBRATE)), DXL_HIBYTE(DXL_HIWORD(VELOCITY_LIMIT_CALIBRATE))]
-            dxl_addparam_result = self.groupSyncWrite.addParam(dxl_ids[i], param_velocity_limit)
-        dxl_comm_result = self.groupSyncWrite.txPacket()
-        print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
-        time.sleep(self.dxl_delay)
-        # Clear syncwrite parameter storage
-        self.groupSyncWrite.clearParam()
-
+        
+        
         # go to approach coordinate
         for i in range(len(dxl_ids)):
             param_goal_position = [DXL_LOBYTE(DXL_LOWORD(approach_coordinate[i])), DXL_HIBYTE(DXL_LOWORD(approach_coordinate[i])), DXL_LOBYTE(DXL_HIWORD(approach_coordinate[i])), DXL_HIBYTE(DXL_HIWORD(approach_coordinate[i]))]
@@ -197,14 +182,12 @@ class TrainingRobotController:
         self.groupSyncWrite.clearParam()
 
 
-
         while 1:
             # Syncread present position
-            for i in dxl_ids:
-                dxl_addparam_result = self.groupSyncRead.addParam(i)
-                dxl_comm_result = self.groupSyncRead.txRxPacket()
-                for i in range(len(dxl_ids)):
-                    self.present_pos[i] = self.groupSyncRead.getData(dxl_ids[i], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
+
+            dxl_addparam_result = self.groupSyncRead.addParam(dxl_ids[z_dxl_ind])
+            dxl_comm_result = self.groupSyncRead.txRxPacket()
+            self.present_pos[z_dxl_ind] = self.groupSyncRead.getData(dxl_ids[z_dxl_ind], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
 
             # request data
             tosend = "request"
@@ -225,31 +208,30 @@ class TrainingRobotController:
             #if contact is detected, break the loop
             if abs(flt_data[3] - prev_ati_value) > diff_thresh:
                 print("detected contact")
-                print("offset count: ", self.present_pos[3])
+                print("offset count: ", self.present_pos[z_dxl_ind])
+                break
+
+            #if we've reached the final position, break the loop
+            elif (self.present_pos[z_dxl_ind] - z_approach_coord_counts) <= 3:
+                print("z_approach_coordinate counts: ", z_approach_coord_counts)
+                print("reached final coordinate, lifting up")
                 break
         
         lift_amount = 50 #counts
-        backup_coordinate = self.present_pos + [0, 0, 0, lift_amount, 0, 0] #******* make sure this is within bounds
+        backup_z_coordinate = self.present_pos[z_dxl_ind] + lift_amount #******* make sure this is within bounds
 
         # go to backup coordinate
-        for i in range(len(dxl_ids)):
-            param_goal_position = [DXL_LOBYTE(DXL_LOWORD(backup_coordinate[i])), DXL_HIBYTE(DXL_LOWORD(backup_coordinate[i])), DXL_LOBYTE(DXL_HIWORD(backup_coordinate[i])), DXL_HIBYTE(DXL_HIWORD(backup_coordinate[i]))]
-            dxl_addparam_result = self.groupSyncWrite.addParam(dxl_ids[i], param_goal_position)
+
+        param_goal_position = [DXL_LOBYTE(DXL_LOWORD(backup_z_coordinate)), DXL_HIBYTE(DXL_LOWORD(backup_z_coordinate)), DXL_LOBYTE(DXL_HIWORD(backup_z_coordinate)), DXL_HIBYTE(DXL_HIWORD(backup_z_coordinate))]
+        dxl_addparam_result = self.groupSyncWrite.addParam(dxl_ids[z_dxl_ind], param_goal_position)
         # Syncwrite goal position
         dxl_comm_result = self.groupSyncWrite.txPacket()
         time.sleep(self.dxl_delay)
         # Clear syncwrite parameter storage
         self.groupSyncWrite.clearParam()
-
+        time.sleep(1)
         # Raise velocity limit 
-        for i in range(len(dxl_ids)):
-            param_velocity_limit = [DXL_LOBYTE(DXL_LOWORD(VELOCITY_LIMIT_NOMINAL)), DXL_HIBYTE(DXL_LOWORD(VELOCITY_LIMIT_NOMINAL)), DXL_LOBYTE(DXL_HIWORD(VELOCITY_LIMIT_NOMINAL)), DXL_HIBYTE(DXL_HIWORD(VELOCITY_LIMIT_NOMINAL))]
-            dxl_addparam_result = self.groupSyncWrite.addParam(dxl_ids[i], param_velocity_limit)
-        dxl_comm_result = self.groupSyncWrite.txPacket()
-        print("%s" % self.packetHandler.getTxRxResult(dxl_comm_result))
-        time.sleep(self.dxl_delay)
-        # Clear syncwrite parameter storage
-        self.groupSyncWrite.clearParam()
+
 
         #go back to home coordinate
         for i in range(len(dxl_ids)):
@@ -260,15 +242,14 @@ class TrainingRobotController:
         time.sleep(self.dxl_delay)
         # Clear syncwrite parameter storage
         self.groupSyncWrite.clearParam()
+        time.sleep(2)
 
 
     '''shutdown robot'''
     def shutdown(self):
         # close the dynamixel port
         self.portHandler.closePort()
-        # close log file
-        self.log_file.close()
-
+        
 
 
 ### main function ###

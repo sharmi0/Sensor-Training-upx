@@ -187,6 +187,7 @@ class TrainingRobotController:
         # TODO: add an initial set of dynamixel commands to self.commands if needed
         # TODO: set max speed
         self.err_pts = []
+        self.position_diff = np.array([0, 0, 0, 0, 0, 0])
 
     def setup_log(self):
         # create the CSV file for the LOG
@@ -257,11 +258,11 @@ class TrainingRobotController:
 
     '''convert from position value to dxl pulse counts **Y1**'''    
     def position_to_pulses_y1(self, position):
-        return (2048 + Y_OFFSET) - round(position * (MAX_COUNTS/(np.pi*PITCH_D)))
+        return 2048 - round(position * (MAX_COUNTS/(np.pi*PITCH_D)))
 
     '''convert from position value to dxl pulse counts **Y2**'''    
     def position_to_pulses_y2(self, position):
-        return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + (2048 - Y_OFFSET)
+        return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048
 
     '''convert from position value to dxl pulse counts **Z**'''    
     def position_to_pulses_z(self, position):
@@ -274,11 +275,11 @@ class TrainingRobotController:
 
     '''convert from pulse counts to position values **Y1**'''    
     def pulses_to_position_y1(self, counts):
-        return ((2048 + Y_OFFSET) -counts) * (np.pi*PITCH_D)/MAX_COUNTS
+        return (2048-counts) * (np.pi*PITCH_D)/MAX_COUNTS
 
     '''convert from pulse counts to position values **Y2**'''    
     def pulses_to_position_y2(self, counts):
-        return (counts-(2048 - Y_OFFSET)) * (np.pi*PITCH_D)/MAX_COUNTS
+        return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
 
     '''convert from pulse counts to position values **Z**'''    
     def pulses_to_position_z(self, counts):
@@ -565,8 +566,9 @@ class TrainingRobotController:
 
                 # print(sensor_data[4:12])
                 for j in range(1, 12):
-                    print(f"{sensor_data[j]:+.4f}", end = " ")
-                print(len(all_data))
+                #     print(f"{sensor_data[j]:+.4f}", end = " ")
+                    pass
+                # print(len(all_data))
                 #         tare_flag.value = 0
                 #         all_data.append([-1 for _ in range(len(combo_data))])
                 all_data.append(combo_data)
@@ -588,7 +590,7 @@ class TrainingRobotController:
             if done_flag.value == 0:
                 raise Exception("QUEUE TIMEDOUT")
         
-        def dxl_control_worker(done_flag, tare_flag, data_valid_flag):
+        def dxl_control_worker(done_flag, tare_flag, data_valid_flag, dxl_queue):
             
             pbar = tqdm.tqdm(enumerate(self.commands), total=len(self.commands))
             data_valid = True
@@ -631,42 +633,65 @@ class TrainingRobotController:
                 # Syncwrite goal position
                 dxl_comm_result = self.groupSyncWrite.txPacket()
                 time.sleep(self.dxl_delay)
-
-                # Clear syncwrite parameter storage
                 self.groupSyncWrite.clearParam()
-                time.sleep(t_dwell) #wait for dxl to get to their positions
 
 
                 # -- Check that we got to final position -- #
-                # for i in self.dxl_ids:
-                #     dxl_addparam_result = self.groupSyncRead.addParam(i)
+                for i in self.dxl_ids:
+                    dxl_addparam_result = self.groupSyncRead.addParam(i)
 
-                # # Syncread present position
-                # dxl_comm_result = self.groupSyncRead.txRxPacket()
-
-                # present_position = [0 for _ in range(len(self.dxl_ids))]
-                # for i in range(len(self.dxl_ids)):
-                #     present_position[i] = self.groupSyncRead.getData(self.dxl_ids[i], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION)
+                beforepos_time = time.time()
+                while 1:
+                    # Syncread present position
+                    dxl_comm_result = self.groupSyncRead.txRxPacket()
                 
-                # for i in range(len(dxl_commands)):
-                #     if abs(present_position[i] - dxl_commands[i]) > 10:
-                #         print(present_position)
-                #         print(dxl_commands)
-                #         print("TOO FAR")
-                # print(present_position)
+                    #find difference between goal and true position
+                    for i in range(len(self.dxl_ids)):
+                        self.position_diff[i] = abs(dxl_commands[i] - self.groupSyncRead.getData(self.dxl_ids[i], ADDR_PRESENT_POSITION, LEN_PRESENT_POSITION))
+                    if np.all(self.position_diff < 25):
+                        # print('good')
+                        break
+                    else:
+                        if time.time() - beforepos_time > 15.0:
+                            print("not at goal position, moving on")
+                            break
 
-            
+                # self.groupSyncRead.clearParam()
 
-                # if dxlt_des != self.commands[i-1][4] or dxlp_des != self.commands[i-1][5]:
-                #     print("Zeroing")
-                #     with tare_flag.get_lock():
-                #         tare_flag.value = 1
-                #     time.sleep(0.1)
-                # if I_tare:
-                #     with tare_flag.get_lock():
-                #         tare_flag.value = 1
-                #     time.sleep(0.1)
-            
+
+        # # Wait for the system to reach the desired position
+        #         dxl_data = [0,0,0,0,0,0]
+                # while True:
+                #     # try:
+                #         # Try to fetch the most recent data
+                #     while not dxl_queue.empty():
+                #         dxl_data = dxl_queue.get_nowait()  # Only update when new data is available
+                    
+                #     print(dxl_data)
+
+                #     # If no data exists yet, skip the check for now
+                #     if dxl_data is None:
+                #         continue
+
+                #     # Calculate position differences
+                #     position_diff = [
+                #         abs(dxl_data[i] - dxl_commands[i]) for i in range(len(self.dxl_ids))
+                #     ]
+                #     print(position_diff)
+                #     # Check if all positions are within the threshold
+                #     if all(diff < 10 for diff in position_diff):
+                #         print(position_diff)
+                #         break
+
+                #     # except dxl_queue.empty:
+                #     #     # No new data yet; wait before retrying
+                #     #     pass
+
+                #     time.sleep(0.1)  # Delay before checking again
+
+                # # Dwell at the current position
+                # time.sleep(t_dwell)
+                
             done_flag.value = 1
 
 
@@ -698,7 +723,7 @@ class TrainingRobotController:
                 args=(sensor_queue, dxl_queue, n_sensor_samples, sensor_frequency, dxl_frequency, done_flag, tare_flag, data_valid_flag))
 
         dxl_control_process = multiprocessing.Process(target=dxl_control_worker,
-                                                      args=(done_flag, tare_flag, data_valid_flag))
+                                                      args=(done_flag, tare_flag, data_valid_flag, dxl_queue))
 
 
         # -- Start data collection -- #
@@ -822,16 +847,10 @@ if __name__ == "__main__":
         # trajectory_filename = "trajectories/spherical_newgantry_validationtrajE9_front.csv",
         # trajectory_filename="trajectories/zTrajectory_1.npy",
 
-        # trajectory_filename="trajectories/nxTrajectory_2500_lowforce.npy",
+        # trajectory_filename="trajectories/zTrajectory_2500.npy",
         # trajectory_filename="trajectories/ellipsoidTrajectory_2000_lowforceFA7.npy",
         # trajectory_filename = "trajectories/ellipsoidTrajectory_1_origin.npy",
-        # trajectory_filename = "trajectories/ellipsoidTrajectory_0_calibration.npy",
-        # trajectory_filename = "trajectories/ellipsoidTrajectory_0_phi-34repeated_c7.npy",
-        # trajectory_filename = "trajectories/ellipsoidTrajectory_0_theta-50repeated_c7_a13.npy",
-        # trajectory_filename= "trajectories/ellipsoidTrajectory_0_eulerangles_notransform_thetabounds.npy",  
-        # trajectory_filename= "trajectories/ellipsoidTrajectory_0_eulerangles_theta_bounds.npy",
-        trajectory_filename = "trajectories/ellipsoidTrajectory_2500_FA8.npy",
-        
+        trajectory_filename = "trajectories/ellipsoidTrajectory_0_repeatedcontacttriangle0-2mm_lowerhome.npy",
         UDP_IP="192.168.1.201",
         UDP_DEST="192.168.1.1",
         UDP_PORT=11223,
@@ -848,10 +867,8 @@ if __name__ == "__main__":
 
 
     robot = TrainingRobotController(config)
-
-    debug_traj = [[-0.4, 10.68, 8, 0.0, 0.0, 0.0, 1] for _ in range(10000)] #x, y, z, 
-    # debug_traj = [[-0.4, 10.68, -6, 0.0, 0.0, 0.0, 1] for _ in range(10000)] #x, y, z, 
-
+ 
+    debug_traj = [[-0.4, 10.68, -6, 0.0, 0.0, 0.0, 1] for _ in range(10)] #x, y, z, 
 
     print("Z_OFFSET: ", Z_OFFSET)
     # robot.load_debug_trajectory(debug_traj)

@@ -1,4 +1,5 @@
 from src.dynamixel_sdk import *
+import numpy as np
 
 # Control table address
 ADDR_TORQUE_ENABLE      = 64               # Control table address is different in Dynamixel model
@@ -7,7 +8,6 @@ ADDR_GOAL_POSITION      = 116
 ADDR_MOVING_STATUS      = 123
 ADDR_PRESENT_POSITION   = 132
 ADDR_DRIVE_MODE         = 10
-ADDR_VELOCITY_LIMIT     = 44
 
 # Data Byte Length
 LEN_GOAL_POSITION       = 4
@@ -15,7 +15,6 @@ LEN_PRESENT_POSITION    = 4
 LEN_MOVING_STATUS       = 1
 LEN_PROFILE_VELOCITY    = 4
 LEN_DRIVE_MODE          = 1
-LEN_VELOCITY_LIMIT      = 4
 
 # Protocol version
 PROTOCOL_VERSION            = 2.0               # See which protocol version is used in the Dynamixel
@@ -28,12 +27,8 @@ DEVICENAME                  = '/dev/ttyUSB0' #'COM11' #'/dev/ttyUSB0'    # Check
 TORQUE_ENABLE               = 1                 # Value for enabling the torque
 TORQUE_DISABLE              = 0                 # Value for disabling the torque
 
-# PROFILE_VELOCITY            = 1               # Maximum velocity of the profile (if drive mode is set to 0 which should be default)
-PROFILE_VELOCITY            = 100               # Maximum velocity of the profile (if drive mode is set to 1)
-
-VELOCITY_LIMIT_CALIBRATE              = 10                #default value is 330, unit: 0.229 [rev/min]
-VELOCITY_LIMIT_NOMINAL                = 330               #default value is 330, unit: 0.229 [rev/min]
-
+PROFILE_VELOCITY_CALIBRATE  = 10               # Maximum velocity of the profile (if drive mode is set to 0 which should be default)
+PROFILE_VELOCITY            = 330               # Maximum velocity of the profile (if drive mode is set to 1)
 
 DXL_MOVING_STATUS_THRESHOLD = 10                # Dynamixel moving status threshold
 DRIVE_MODE                  = 0
@@ -51,14 +46,21 @@ MAX_COUNTS = 4095
 # ati_roll_lims = [1100, 2565] # theta <> roll
 
 # for ICL sensor
-Z_OFFSET = 1900 # dxl position when sensor touches pedestal
+# Z_OFFSET = 1900 # dxl position when sensor touches pedestal
+
+# for ellipsoid and spherical sensors 
+# 1487 is when the ellipsoid sensor touches the pedestal + the offset that is added in the trajectory
+# units are in counts
+Z_OFFSET = 1487 + -15 + round(8*(MAX_COUNTS/(np.pi*PITCH_D))) # (+) moves lower the 8mm is technically supposed to be 8.65 but there is some discrepancy #1487
+Y_OFFSET = 60 # (+) moves towards front of gantry
+X_OFFSET = -30 # (+) moves towards the right 
 
 x_lims = [248, 3848]
-y1_lims = [1398, 2698]
-y2_lims = [1398, 2698]
-z_lims = [1750, 2035] # TODO: change lower limit for actual testing
-ati_pitch_lims = [2000, 2100]
-ati_roll_lims = [2000, 2100]
+y1_lims = [300, 3760]
+y2_lims = [300, 3760]
+z_lims = [840, 3100] # TODO: change lower limit for actual testing
+ati_pitch_lims = [1000, 2800]
+ati_roll_lims = [1100, 2565]
 
 # max_z_height = 2035
 # zero_z_height = 1750
@@ -166,35 +168,35 @@ def initComms():
 #     max_counts = 4095
 #     return (counts-1740) * (np.pi*PITCH_D)/max_counts
 
-'''convert from position value to dxl pulse counts **X**'''    
-def position_to_pulses_x(position):
-    return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048
+# '''convert from position value to dxl pulse counts **X**'''    
+# def position_to_pulses_x(position):
+#     return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048
 
-'''convert from position value to dxl pulse counts **Y1**'''    
-def position_to_pulses_y1(position):
-    return 2048 - round(position * (MAX_COUNTS/(np.pi*PITCH_D)))
+# '''convert from position value to dxl pulse counts **Y1**'''    
+# def position_to_pulses_y1(position):
+#     return 2048 - round(position * (MAX_COUNTS/(np.pi*PITCH_D)))
 
-'''convert from position value to dxl pulse counts **Y2**'''    
-def position_to_pulses_y2(position):
-    return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048
+# '''convert from position value to dxl pulse counts **Y2**'''    
+# def position_to_pulses_y2(position):
+#     return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + 2048
 
-'''convert from position value to dxl pulse counts **Z**'''    
-def position_to_pulses_z(position):
-    return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + Z_OFFSET #set z offset to be such that 0 is where the sensor touches the pedestal
+# '''convert from position value to dxl pulse counts **Z**'''    
+# def position_to_pulses_z(position):
+#     return round(position * (MAX_COUNTS/(np.pi*PITCH_D))) + Z_OFFSET #set z offset to be such that 0 is where the sensor touches the pedestal
 
 
-'''convert from pulse counts to position values **X** '''    
-def pulses_to_position_x(counts):
-    return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
+# '''convert from pulse counts to position values **X** '''    
+# def pulses_to_position_x(counts):
+#     return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
 
-'''convert from pulse counts to position values **Y1**'''    
-def pulses_to_position_y1(counts):
-    return (2048-counts) * (np.pi*PITCH_D)/MAX_COUNTS
+# '''convert from pulse counts to position values **Y1**'''    
+# def pulses_to_position_y1(counts):
+#     return (2048-counts) * (np.pi*PITCH_D)/MAX_COUNTS
 
-'''convert from pulse counts to position values **Y2**'''    
-def pulses_to_position_y2(counts):
-    return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
+# '''convert from pulse counts to position values **Y2**'''    
+# def pulses_to_position_y2(counts):
+#     return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
 
-'''convert from pulse counts to position values **Z**'''    
-def pulses_to_position_z(counts):
-    return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
+# '''convert from pulse counts to position values **Z**'''    
+# def pulses_to_position_z(counts):
+#     return (counts-2048) * (np.pi*PITCH_D)/MAX_COUNTS
