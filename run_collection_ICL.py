@@ -6,7 +6,7 @@ import serial
 import time
 import csv
 from datetime import datetime as dt
-from dxl_comms import *
+from dxl_comms_icl import *
 from dataclasses import dataclass
 import tqdm
 import multiprocess
@@ -55,7 +55,7 @@ class TrainingRobot:
 
     def setup_mmiba(self):
         self.mmiba_ser = serial.Serial(
-            port='/dev/tty.usbmodem21303',
+            port='/dev/ttyACM0',
             baudrate=921600,
             timeout=1
         )
@@ -74,7 +74,7 @@ class TrainingRobot:
             self.groupSyncRead,
             self.groupSyncWrite_PROF_VEL
         ) = initComms()
-        self.dxl_delay = 0.01  # wait time between sending and reading
+        self.dxl_delay = 0.002  # wait time between sending and reading
         self.present_pos = [0, 0, 0, 0, 0, 0]
 
         # Enable Dynamixel Torques
@@ -119,7 +119,7 @@ class TrainingRobot:
         try:
             split_data = data.decode().strip().split(",")
             if (len(split_data) != 37):
-                print("Bad serial data from mmiba: wrong length.")
+                print("Bad serial data from mmiba: wrong length: {d}".format(len(split_data)))
                 bad_data = 1
                 # self.mmiba_ser.flush()
             else:
@@ -136,6 +136,9 @@ class TrainingRobot:
         """Write dxl data to present_position"""
         #read dynamixel values: x, y, z, theta, phi
         #read present position value
+        
+        # NOTE: currently takes about 15-16ms, regardless of how many DXLs are attached
+
         for i in self.dxl_ids:
             dxl_addparam_result = self.groupSyncRead.addParam(i)
 
@@ -174,11 +177,12 @@ def ati_sample_worker(robot, start_time, loop_time, ati_queue, done_flag):
         if sleep_time > 0:
             time.sleep(sleep_time)
         elif sleep_time < 0 and -sleep_time < loop_time:
-            print(f"Loop overran for {sleep_time}")
+            print(f"ATI loop overran for {sleep_time}")
             overrun_count += 1
-            if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
-                raise ValueError("Overran too much")
+            # if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
+            #     raise ValueError("Overran too much")
         # Sample data
+        # NOTE: takes about 1ms 
         sample = robot.get_ati_data()
         # mmiba_sample = robot.get_mmiba_data()
         # sample = ati_sample + mmiba_sample # ati data is 4 values, mmiba data is 36 values
@@ -210,7 +214,7 @@ def mmiba_sample_worker(robot, start_time, loop_time, mmiba_queue, done_flag):
             continue
 
         # if sample_time < 0 and -sample_time < loop_time:
-        #     print(f"Loop overran for {sample_time}")
+        #     print(f"mmiba loop overran for {sample_time}")
         #     overrun_count += 1
         #     if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
         #         raise ValueError("Overran too much")
@@ -228,7 +232,7 @@ def mmiba_sample_worker(robot, start_time, loop_time, mmiba_queue, done_flag):
         # if sleep_time > 0:
         #     time.sleep(sleep_time)
         # elif sleep_time < 0 and -sleep_time < loop_time:
-        #     print(f"Loop overran for {sleep_time}")
+        #     print(f"mmiba loop overran for {sleep_time}")
         #     overrun_count += 1
         #     if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
         #         raise ValueError("Overran too much")
@@ -254,11 +258,12 @@ def dxl_sample_worker(robot, start_time, loop_time, data_queue, done_flag):
         if sleep_time > 0:
             time.sleep(sleep_time)
         elif sleep_time < 0 and -sleep_time < loop_time:
-            print(f"Loop overran for {sleep_time}")
+            print(f"DXL loop overran for {sleep_time}")
             overrun_count += 1
-            if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
-                raise ValueError("Overran too much")
+            # if overrun_count / i > 0.01:  # want less than 1 percent to be overrun
+            #     raise ValueError("Overran too much")
         # Sample data
+        # NOTE: this takes about 16ms, seems like USB limit, DXL baud doesn't affect it
         sample = robot.get_dxl_data()
         data_queue.put(sample)
         i += 1
@@ -372,9 +377,10 @@ def dxl_control_worker(robot, commands, dxl_command_queue, done_flag, tare_flag,
                 to_sleep = data_valid_flag.value == 0
                 data_valid_flag.value = 1
             if to_sleep:
-                time.sleep(0.2)  # Give time to tare
+                time.sleep(0.2)  # Give time to tare # TODO: why is this necessary?
         
-        #command new goal position all
+        # command new goal position for all
+        # NOTE: since we aren't receiving responses, this takes just 2ms (mostly due to DXL delay)
         for i in range(len(robot.dxl_ids)):
             # print("DXL ID: ", self.dxl_ids[i], "DXL_COMMAND: ", dxl_commands[i])
             param_goal_position = [DXL_LOBYTE(DXL_LOWORD(dxl_commands[i])), DXL_HIBYTE(DXL_LOWORD(dxl_commands[i])), DXL_LOBYTE(DXL_HIWORD(dxl_commands[i])), DXL_HIBYTE(DXL_HIWORD(dxl_commands[i]))]
@@ -432,7 +438,7 @@ class TrainingRobotController:
         
     def add_point(self,traj_data): 
         """add a trajectory point"""
-        # x, y, z, theta, phi, t_dwell, I_tare
+        # x, y, z, theta, phi, t_dwell, I_tare, point_idx
 
         # calculate dynamixel positions
         # traj data = x, y, z, theta, phi
@@ -544,15 +550,20 @@ class TrainingRobotController:
         # start motor control
         print('Starting dxl control process.')
         dxl_control_process.start()
+
         # join all the processes
         dxl_process.join()
+        print("Finished DXL process.")
         ati_process.join()
+        print("Finished ATI process.")
         mmiba_process.join()
+        print("Finished mmiba process.")
         aggregator_process.join()
+        print("Finished aggregator process.")
         dxl_control_process.join()
-        print('Finished processes.')
+        print('Finished all processes.')
 
-    '''shutdown robot'''
+    '''shutdown robot''' 
     def shutdown(self):
         # shutdow robot
         self.robot.shutdown()
@@ -561,17 +572,17 @@ class TrainingRobotController:
 # run
 if __name__ == "__main__":
     config = Config(
-        log_save_name = "SINGLEPRESS_BP_COMBO",
-        trajectory_filename="trajectories/mmibaTrajectorysingle_press_2.npy",
+        log_save_name = "ICL_debug",
+        trajectory_filename="trajectories/ICL_trajectories/mmibaTrajectorysingle_press_2.npy",
         UDP_IP="192.168.1.201",
         UDP_DEST="192.168.1.1",
         UDP_PORT=11223,
         baud_rate=9600,
         verbose_aggregator = False,
-        sensor_sample_freq = 100,
-        dxl_sample_freq = 5,
-        dxl_z_offset = 1800, # dxl position when sensor touches pedestal, in counts (1635 for vytaflex, 1750 for ecoflex)
-        dxl_roll_offset = 15, # in counts
+        sensor_sample_freq = 100, #100,
+        dxl_sample_freq = 50, #5,
+        dxl_z_offset = 1645, # dxl position when sensor touches pedestal, in counts (1635 for vytaflex, 1750 for ecoflex)
+        dxl_roll_offset = 0, # in counts
         dxl_pitch_offset = 0, # in counts
         home_x_offset = -0.5, # in mm
         home_y_offset = -1.0, # in mm
@@ -581,7 +592,7 @@ if __name__ == "__main__":
     robot_controller = TrainingRobotController(config)
 
     # load traj
-    # debug_traj = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 1, 20] for _ in range(10)]
+    # debug_traj = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 1, 20] for _ in range(10)] # x, y, z, theta, phi, t_dwell, I_tare, idx
     # robot_controller.load_debug_trajectory(debug_traj)
     robot_controller.load_trajectory()
 
